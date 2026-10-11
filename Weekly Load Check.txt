@@ -1,0 +1,70 @@
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import os
+
+# Huawei UMTS
+file_dir_1 = Path(r'D:\ATOM\KPI Monitor\Data Update for load\5-Oct-2026')
+
+df = pd.DataFrame()
+for f in file_dir_1.rglob('HW_Data_Update_3G_NBH_Cell*.csv'):
+    df_temp = pd.read_csv(f)
+    df = df.append(df_temp)
+df['HSDPA_UserThroughput'] = df['VS.HSDPA.DataOutput.Traffic(bit)']/(df['VS.HSDPA.DataTtiNum.User']*2)
+df['VS.MeanTCP(W)'] = df['VS.MeanTCP(dBm)'].apply(lambda x: 10**(x/10)/1000)
+df['Max Transmit Power of Cell_watt'] = df['Max Transmit Power of Cell'].apply(lambda x: 10**(x/100)/1000)
+df['TCP Utilization'] = df['VS.MeanTCP(W)']/df['Max Transmit Power of Cell_watt']
+df['Load Check_thrp'] = np.where((df['HSDPA_UserThroughput'] < 1000), 1, 0)
+df['Load Check_both'] = np.where(((df['HSDPA_UserThroughput'] < 1000) & (df['TCP Utilization'] > 0.8)), 1, 0)
+df['nan_count'] = df['Load Check_both'].isna().sum()
+df_1 = df.groupby('Date')[['Load Check_thrp', 'Load Check_both','nan_count']].agg(['sum','count'])
+df_1 = df_1.reset_index()
+
+df_1.to_csv(os.path.join(file_dir_1,'HW_UMTS_Daily_NBH_Cell_Load_Check_result.csv'), index=False, header=True)
+
+
+# Huawei LTE
+
+df = pd.DataFrame()
+for f in file_dir_1.rglob('HW_Data_Update_4G_DBH*.csv'):
+    df_temp = pd.read_csv(f, sep=',')
+    df = df.append(df_temp)
+
+df['Throughput(kbps)'] = (df['L.Thrp.bits.DL(bit)'] - df['L.Thrp.bits.DL.LastTTI(bit)'])/df['L.Thrp.Time.DL.RmvLastTTI(ms)']
+df['PRB Utilization'] = df['L.ChMeas.PRB.DL.Used.Avg']/df['L.ChMeas.PRB.DL.Avail']
+df['Load Check'] = np.where(((df['Throughput(kbps)'] < 2000) & (df['PRB Utilization'] > 0.7)), 1, 0)
+df['nan_count'] = df['Load Check'].isna().sum()
+df_2 = df.groupby('Date')[['Load Check','nan_count']].agg(['sum','count'])
+df_2 = df_2.reset_index()
+df_2.to_csv(os.path.join(file_dir_1,'HW_LTE_Daily_DBH_Cell_Load_Check_result.csv'), index=False, header=True)
+
+
+
+df = pd.DataFrame()
+for f in file_dir_1.rglob('ERIC_Data_Update_3G_NBH_Cell*.csv'):
+    df_temp = pd.read_csv(f, sep=',')
+    df = df.append(df_temp)
+
+df['Load Check_thrp'] = np.where((df['HS User Throughput(Kbps)'] < 1000), 1, 0)
+df['Load Check_both'] = np.where(((df['HS User Throughput(Kbps)'] < 1000) & (df['Power Utilization'] > 80)), 1, 0)
+df['nan_count'] = df['Load Check_both'].isna().sum()
+df_1 = df.groupby('Date')[['Load Check_thrp', 'Load Check_both','nan_count']].agg(['sum','count'])
+df_1 = df_1.reset_index()
+df_1.to_csv(os.path.join(file_dir_1,'ERIC_UMTS_Daily_NBH_Cell_Load_Check_result.csv'), index=False, header=True)
+
+
+df = pd.DataFrame()
+for f in file_dir_1.rglob('ERIC_Data_Update_4G_DBH*.csv'):
+    df_temp = pd.read_csv(f, sep=',')
+    df = df.append(df_temp)
+
+df['Throughput(kbps)'] = (df['pmPdcpVolDlDrb'] - df['pmPdcpVolDlDrbLastTTI'])/df['pmUeThpTimeDl'] * 1000
+df['PRB Utilization'] = (df['pmPrbUsedDlDtch'] + df['pmPrbUsedDlSrbFirstTrans'] + df['pmPrbUsedDlAilgTot'] + df['pmPrbUsedDlPcch'])/df['pmPrbAvailDl']
+df['Load Check'] = np.where(((df['Throughput(kbps)'] < 2000) & (df['PRB Utilization'] > 0.7)), 1, 0)
+df['nan_count'] = df['Load Check'].isna().sum()
+df_3 = df.groupby('Date')[['Load Check','nan_count']].agg(['sum','count'])
+df_3 = df_3.reset_index()
+df_3.to_csv(os.path.join(file_dir_1,'ERIC_LTE_Daily_DBH_Cell_Load_Check_result.csv'), index=False, header=True)
+
+
+print("Load check successfully done.")
