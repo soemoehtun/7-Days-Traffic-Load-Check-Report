@@ -1,584 +1,417 @@
-# Daily 3G/4G Throughput Combination Report
+# 7-Days Traffic Load Check Report — Excel VBA
 
-## Overview
+This tool answers one core Radio-Optimization question:
 
-An Excel VBA macro that imports daily busy-hour cell traffic exports
-from **Huawei (HW)** and **Ericsson (Eric)** for **3G (UMTS)** and **4G
-(LTE)**. It calculates throughput and utilization KPIs, flags loaded
-cells, and writes summary reports by **Date** and **Date × Region** to
-the `Control` worksheet.
+> ## *"How many cells are giving LOW THROUGHPUT but operating at HIGH LOAD?"*
 
-------------------------------------------------------------------------
+It imports 7-day busy-hour traffic data for **Huawei/Ericsson UMTS (3G) and LTE (4G)**,
+derives throughput and resource-utilization KPIs from raw vendor counters, flags
+**possible load-limited cells**, and aggregates the results **date-wise** into a
+summary sheet.
 
-## 1. Workbook Structure
+| Technology | High-Load Indicator Used |
+|---|---|
+| Huawei UMTS | **TCP Power Utilization > 80%** |
+| Ericsson UMTS | **Power Utilization > 80%** |
+| Huawei LTE | **PRB Utilization > 70%** |
+| Ericsson LTE | **PRB Utilization > 70%** |
 
-  -----------------------------------------------------------------------
-  Sheet                   Purpose                 Created by macro?
-  ----------------------- ----------------------- -----------------------
-  `Control`               Township-to-region      No --- must exist
-                          lookup table and all    
-                          summary outputs         
+---
 
-  `EP Information`        Reference information;  No --- must exist
-                          left untouched          
+## Table of Contents
 
-  `HW UMTS`               Huawei 3G raw data and  Yes
-                          calculated columns      
+1. [Requirements & Setup](#1-requirements--setup)
+2. [How to Run](#2-how-to-run)
+3. [Source File Naming](#3-source-file-naming)
+4. [Processing Pipeline](#4-processing-pipeline)
+5. [Part A — Huawei UMTS Formulas](#5-part-a--huawei-umts-3g)
+6. [Part B — Ericsson UMTS Formulas](#6-part-b--ericsson-umts-3g)
+7. [Part C — Huawei LTE Formulas](#7-part-c--huawei-lte-4g)
+8. [Part D — Ericsson LTE Formulas](#8-part-d--ericsson-lte-4g)
+9. [Summary Sheet (Control)](#9-summary-sheet-control)
+10. [Thresholds Summary](#10-thresholds-summary)
+11. [Notes & Known Issues](#11-notes--known-issues)
 
-  `Eric UMTS`             Ericsson 3G raw data    Yes
-                          and calculated columns  
+---
 
-  `HW LTE`                Huawei 4G raw data and  Yes
-                          calculated columns      
+## 1. Requirements & Setup
 
-  `Eric LTE`              Ericsson 4G raw data    Yes
-                          and calculated columns  
-  -----------------------------------------------------------------------
+- Microsoft Excel (Windows), macros enabled, workbook saved as `.xlsm`
+- Two permanent sheets must exist (never deleted):
+  - **`Control`** — receives the summary output
+  - **`EP Information`** — reference sheet
+- Source files must have: data on the **first sheet**, headers in **row 1**,
+  and the **Date in column A**
 
-> **Important:** All other worksheets are deleted at the start of each
-> run. Save a backup before running the macro if the workbook contains
-> other sheets you need.
+**Setup:** `Alt + F11` → Insert → Module → paste the code → save as `.xlsm`.
 
-### Control worksheet layout
+## 2. How to Run
 
-  -----------------------------------------------------------------------
-  Range                               Content
-  ----------------------------------- -----------------------------------
-  `D4:G7`                             Township lookup table. Column D =
-                                      6-character township code, F =
-                                      Region, G = Township
+1. Run the **`ReportProcess`** macro (`Alt + F8`, or assign it to a button).
+2. Select one or more source files in the dialog (Ctrl/Shift = multi-select).
+3. A message box shows the elapsed processing time when done.
 
-  `I:P`                               UMTS summary by Date
+All data sheets are deleted and rebuilt on every run.
 
-  `R:W`                               LTE summary by Date
+## 3. Source File Naming
 
-  `Y:AC`                              UMTS summary by Date × Region
+Files are matched by **case-insensitive substring** in the file name:
 
-  `AE:AH`                             LTE summary by Date × Region
-  -----------------------------------------------------------------------
+| Destination Sheet | File name must contain | Vendor | Tech |
+|---|---|---|---|
+| `HW UMTS` | `hw_data_update_3g_nbh_cell` | Huawei | UMTS |
+| `Eric UMTS` | `eric_data_update_3g_nbh_cell` | Ericsson | UMTS |
+| `HW LTE` | `hw_data_update_4g_dbh` | Huawei | LTE |
+| `Eric LTE` | `eric_data_update_4g_dbh` | Ericsson | LTE |
 
-The township code is extracted from the cell name using
-`MID(CellName,5,6)`.
+## 4. Processing Pipeline
 
-------------------------------------------------------------------------
-
-## 2. Input Files
-
-Select all four input files in the file-selection dialog. The macro
-identifies each file by a case-insensitive substring in its filename.
-
-  Filename contains                Loaded into worksheet
-  -------------------------------- -----------------------
-  `hw_data_update_3g_nbh_cell`     `HW UMTS`
-  `eric_data_update_3g_nbh_cell`   `Eric UMTS`
-  `hw_data_update_4g_dbh`          `HW LTE`
-  `eric_data_update_4g_dbh`        `Eric LTE`
-
--   Only the first worksheet of each selected file is read.
--   If a matching file is not selected, that input is skipped.
--   The source columns listed below are copied into the corresponding
-    destination columns.
-
-### Imported source columns
-
-  Destination worksheet   Source columns       Destination columns
-  ----------------------- -------------------- ---------------------
-  `HW UMTS`               `A, D, E, I, J, K`   `A:F`
-  `Eric UMTS`             `A, C, F, G`         `A:D`
-  `HW LTE`                `A, E, I:M`          `A:G`
-  `Eric LTE`              `A:H, J:K`           `A:J`
-
-**Expected data fields:** Column A must contain the Date, and column B
-must contain the cell identifier/name. For regional mapping, the macro
-extracts the six-character township code from characters 5--10 of column
-B.
-
-------------------------------------------------------------------------
-
-## 3. Data Layout After Import and KPI Calculation
-
-The following tables describe the expected final column layout on each
-data worksheet after import and calculation.
-
-### 3.1 HW UMTS
-
-  ----------------------------------------------------------------------------------
-  Column                  Header                             Description
-  ----------------------- ---------------------------------- -----------------------
-  A                       Date                               Reporting date
-
-  B                       Cell Name                          Cell identifier/name
-
-  C                       Max Transmit Power of Cell         Imported transmit-power
-                                                             value (×0.1 dBm,
-                                                             according to the source
-                                                             definition)
-
-  D                       VS.HSDPA.DataOutput.Traffic(bit)   HSDPA traffic/output
-                                                             counter
-
-  E                       VS.HSDPA.DataTtiNum.User           HSDPA user TTI counter
-
-  F                       VS.MeanTCP(dBm)                    Mean TCP power in dBm
-
-  G                       HSDPA_UserThroughput               Calculated user
-                                                             throughput (kbps)
-
-  H                       VS.MeanTCP(W)                      Mean TCP converted to
-                                                             watts
-
-  I                       Max Transmit Power of Cell_watt    Maximum transmit power
-                                                             converted to watts
-
-  J                       TCP Utilization(%)                 TCP power utilization
-
-  K                       Load Check_thrp                    Flag for low throughput
-
-  L                       Load Check_both                    Flag for low throughput
-                                                             and high TCP
-                                                             utilization
-
-  M                       Region                             Region looked up from
-                                                             `Control`
-
-  N                       Township                           Township looked up from
-                                                             `Control`
-  ----------------------------------------------------------------------------------
-
-### 3.2 Eric UMTS
-
-  -----------------------------------------------------------------------
-  Column                  Header                  Description
-  ----------------------- ----------------------- -----------------------
-  A                       Date                    Reporting date
-
-  B                       Ucell Id                Cell identifier
-
-  C                       HS User                 Imported user
-                          Throughput(Kbps)        throughput
-
-  D                       Power Utilization       Imported power
-                                                  utilization
-
-  E                       Load Check_thrp         Flag for low throughput
-
-  F                       Load Check_both         Flag for low throughput
-                                                  and high power
-                                                  utilization
-
-  G                       Region                  Region looked up from
-                                                  `Control`
-
-  H                       Township                Township looked up from
-                                                  `Control`
-  -----------------------------------------------------------------------
-
-### 3.3 HW LTE
-
-  -------------------------------------------------------------------------------
-  Column                  Header                          Description
-  ----------------------- ------------------------------- -----------------------
-  A                       Date                            Reporting date
-
-  B                       Cell Name                       Cell identifier/name
-
-  C                       L.Thrp.bits.DL(bit)             Downlink traffic volume
-
-  D                       L.Thrp.bits.DL.LastTTI(bit)     Downlink volume in the
-                                                          last TTI
-
-  E                       L.Thrp.Time.DL.RmvLastTTI(ms)   Downlink transmission
-                                                          time excluding last TTI
-
-  F                       L.ChMeas.PRB.DL.Used.Avg        Average downlink PRBs
-                                                          used
-
-  G                       L.ChMeas.PRB.DL.Avail           Available downlink PRBs
-
-  H                       Throughput(kbps)                Calculated downlink
-                                                          throughput
-
-  I                       PRB Utilization (%)             Calculated PRB
-                                                          utilization
-
-  J                       Load Check                      Flag for low throughput
-                                                          and high PRB
-                                                          utilization
-
-  K                       Region                          Region looked up from
-                                                          `Control`
-
-  L                       Township                        Township looked up from
-                                                          `Control`
-  -------------------------------------------------------------------------------
-
-### 3.4 Eric LTE
-
-  --------------------------------------------------------------------------
-  Column                  Header                     Description
-  ----------------------- -------------------------- -----------------------
-  A                       Date                       Reporting date
-
-  B                       EUtranCell Id              Cell identifier
-
-  C                       pmPdcpVolDlDrb             Downlink PDCP volume
-
-  D                       pmPdcpVolDlDrbLastTTI      Downlink PDCP volume in
-                                                     the last TTI
-
-  E                       pmUeThpTimeDl              Downlink throughput
-                                                     measurement time
-
-  F                       pmPrbUsedDlDtch            PRB used for DL DTCH
-
-  G                       pmPrbUsedDlSrbFirstTrans   PRB used for
-                                                     first-transmission DL
-                                                     SRB
-
-  H                       pmPrbUsedDlAilgTot         PRB-used counter for
-                                                     the named LTE
-                                                     measurement
-
-  I                       pmPrbUsedDlPcch            PRB used for DL PCCH
-
-  J                       pmPrbAvailDl               Available downlink PRBs
-
-  K                       Throughput(kbps)           Calculated downlink
-                                                     throughput
-
-  L                       PRB Utilization(%)         Calculated PRB
-                                                     utilization
-
-  M                       Load Check                 Flag for low throughput
-                                                     and high PRB
-                                                     utilization
-
-  N                       Region                     Region looked up from
-                                                     `Control`
-
-  O                       Township                   Township looked up from
-                                                     `Control`
-  --------------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## 4. KPI Formulas and Load Checks
-
-The formulas below show the intended calculation logic. In the workbook,
-formulas are wrapped in `IFERROR(...,"")` and converted to values after
-calculation.
-
-### 4.1 Huawei UMTS --- `HW UMTS`
-
-  -----------------------------------------------------------------------------------------------------
-  Column            Header                 Formula / logic                            Meaning
-  ----------------- ---------------------- ------------------------------------------ -----------------
-  G                 HSDPA_UserThroughput   `=D/(E*2)`                                 User throughput
-                                                                                      (kbps, subject to
-                                                                                      source units)
-
-  H                 VS.MeanTCP(W)          `=10^(F/10)/1000`                          Convert the
-                                                                                      imported mean TCP
-                                                                                      value to watts,
-                                                                                      as specified by
-                                                                                      the macro
-
-  I                 Max Transmit Power of  `=10^(C/100)/1000`                         Convert the
-                    Cell_watt                                                         imported power
-                                                                                      value to watts,
-                                                                                      as specified by
-                                                                                      the macro
-
-  J                 TCP Utilization(%)     `=H/I*100`                                 TCP power
-                                                                                      utilization
-
-  K                 Load Check_thrp        `=IF(G<1000,1,0)`                          1 when throughput
-                                                                                      is below 1,000
-                                                                                      kbps
-
-  L                 Load Check_both        `=IF(AND(G<1000,J>80),1,0)`                1 when throughput
-                                                                                      is below 1,000
-                                                                                      kbps and TCP
-                                                                                      utilization is
-                                                                                      above 80%
-
-  M                 Region                 `=VLOOKUP(MID(B,5,6),Control!D4:G7,3,0)`   Region lookup
-
-  N                 Township               `=VLOOKUP(MID(B,5,6),Control!D4:G7,4,0)`   Township lookup
-  -----------------------------------------------------------------------------------------------------
-
-### 4.2 Ericsson UMTS --- `Eric UMTS`
-
-  Column   Header            Formula / logic
-  -------- ----------------- ------------------------------------------
-  E        Load Check_thrp   `=IF(C<1000,1,0)`
-  F        Load Check_both   `=IF(AND(C<1000,D>80),1,0)`
-  G        Region            `=VLOOKUP(MID(B,5,6),Control!D4:G7,3,0)`
-  H        Township          `=VLOOKUP(MID(B,5,6),Control!D4:G7,4,0)`
-
-### 4.3 Huawei LTE --- `HW LTE`
-
-  Column   Header                Formula / logic
-  -------- --------------------- ------------------------------------------
-  H        Throughput(kbps)      `=(C-D)/E`
-  I        PRB Utilization (%)   `=F/G*100`
-  J        Load Check            `=IF(AND(H<2000,I>70),1,0)`
-  K        Region                `=VLOOKUP(MID(B,5,6),Control!D4:G7,3,0)`
-  L        Township              `=VLOOKUP(MID(B,5,6),Control!D4:G7,4,0)`
-
-### 4.4 Ericsson LTE --- `Eric LTE`
-
-  Column   Header                Formula / logic
-  -------- --------------------- ------------------------------------------
-  K        Throughput(kbps)      `=((C-D)/E)*1000`
-  L        PRB Utilization (%)   `=((F+G+H+I)/J)*100`
-  M        Load Check            `=IF(AND(K<2000,L>70),1,0)`
-  N        Region                `=VLOOKUP(MID(B,5,6),Control!D4:G7,3,0)`
-  O        Township              `=VLOOKUP(MID(B,5,6),Control!D4:G7,4,0)`
-
-### Load thresholds
-
-  ---------------------------------------------------------------------------------
-  Technology      Throughput threshold          Utilization Loaded-cell rule
-                                                  threshold 
-  --------------- -------------------- -------------------- -----------------------
-  3G (UMTS)           Below 1,000 kbps      TCP utilization `Load Check_both = 1`
-                                                  above 80% 
-
-  4G (LTE)            Below 2,000 kbps      PRB utilization `Load Check = 1`
-                                                  above 70% 
-  ---------------------------------------------------------------------------------
-
-**Flag interpretation:** A value of `1` means the row meets the
-corresponding condition; `0` means it does not. The throughput-only flag
-and the combined throughput-plus-utilization flag are separate checks
-for UMTS.
-
-> **Formula validation note:** Confirm source units and counter
-> definitions before using these formulas for engineering decisions. In
-> particular, verify the UMTS power conversion and the throughput unit
-> conversions for both vendors against the vendor counter definitions.
-> The formulas above document the stated macro logic rather than
-> independently validating the counter units.
-
-------------------------------------------------------------------------
-
-## 5. Summary by Date --- `Control!I:W`
-
-The date keys are unique dates found in `HW UMTS!A`, sorted in ascending
-order.
-
-### 5.1 UMTS summary --- `Control!I:P`
-
-  -----------------------------------------------------------------------
-  Column                  Output                  Calculation
-  ----------------------- ----------------------- -----------------------
-  I                       Date                    Unique reporting date
-
-  J                       HW UMTS cell count      Count of Huawei UMTS
-                                                  cells for the date
-
-  K                       HW UMTS low-throughput  Count of `HW UMTS` rows
-                          count                   where column K = 1
-
-  L                       HW UMTS loaded count    Count of `HW UMTS` rows
-                                                  where column L = 1
-
-  M                       Eric UMTS cell count    Count of Ericsson UMTS
-                                                  cells for the date
-
-  N                       Eric UMTS               Count of `Eric UMTS`
-                          low-throughput count    rows where column E = 1
-
-  O                       Eric UMTS loaded count  Count of `Eric UMTS`
-                                                  rows where column F = 1
-
-  P                       Loaded Ratio            `(L+O)/(J+M)`
-  -----------------------------------------------------------------------
-
-### 5.2 LTE summary --- `Control!R:W`
-
-  -----------------------------------------------------------------------
-  Column                  Output                  Calculation
-  ----------------------- ----------------------- -----------------------
-  R                       Date                    Reporting date
-
-  S                       HW LTE cell count       Count of Huawei LTE
-                                                  cells for the date
-
-  T                       HW LTE loaded count     Count of `HW LTE` rows
-                                                  where column J = 1
-
-  U                       Eric LTE cell count     Count of Ericsson LTE
-                                                  cells for the date
-
-  V                       Eric LTE loaded count   Count of `Eric LTE`
-                                                  rows where column M = 1
-
-  W                       Loaded Ratio            `(T+V)/(S+U)`
-  -----------------------------------------------------------------------
-
-The loaded ratio is the total loaded-cell count divided by the total
-cell count for the corresponding technology and date. If the total cell
-count is zero, the macro should avoid a divide-by-zero result.
-
-------------------------------------------------------------------------
-
-## 6. Summary by Date × Region --- `Control!Y:AH`
-
-The report uses these five regions, with five rows per date and dates
-sorted ascending:
-
-1.  North West
-2.  North East
-3.  South West
-4.  South East
-5.  Yangon
-
-### 6.1 UMTS summary --- `Control!Y:AC`
-
-  -----------------------------------------------------------------------
-  Column                  Output                  Calculation
-  ----------------------- ----------------------- -----------------------
-  Y                       Date                    Reporting date
-
-  Z                       Region                  One of the five
-                                                  configured regions
-
-  AA                      Low-throughput count    `COUNTIFS` for Ericsson
-                                                  UMTS column E = 1 plus
-                                                  Huawei UMTS column K =
-                                                  1, matching Region and
-                                                  Date
-
-  AB                      Loaded count            `COUNTIFS` for Ericsson
-                                                  UMTS column F = 1 plus
-                                                  Huawei UMTS column L =
-                                                  1, matching Region and
-                                                  Date
-
-  AC                      Total cell count        Ericsson UMTS cell
-                                                  count plus Huawei UMTS
-                                                  cell count, matching
-                                                  Region and Date
-  -----------------------------------------------------------------------
-
-### 6.2 LTE summary --- `Control!AE:AH`
-
-  -----------------------------------------------------------------------
-  Column                  Output                  Calculation
-  ----------------------- ----------------------- -----------------------
-  AE                      Date                    Reporting date
-
-  AF                      Region                  One of the five
-                                                  configured regions
-
-  AG                      Loaded count            `COUNTIFS` for Ericsson
-                                                  LTE column M = 1 plus
-                                                  Huawei LTE column J =
-                                                  1, matching Region and
-                                                  Date
-
-  AH                      Total cell count        Ericsson LTE cell count
-                                                  plus Huawei LTE cell
-                                                  count, matching Region
-                                                  and Date
-  -----------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## 7. Process Flow
-
-``` mermaid
-flowchart TD
-    A([Start macro]) --> B[Keep Control and EP Information]
-    B --> C[Delete all other worksheets]
-    C --> D[Select the four daily source files]
-    D --> E[Match files by filename pattern]
-    E --> F[Import selected source columns]
-    F --> G[Calculate UMTS throughput and TCP utilization]
-    G --> H[Calculate LTE throughput and PRB utilization]
-    H --> I[Apply load-check flags]
-    I --> J[Map cell IDs to Region and Township]
-    J --> K[Convert formulas to values]
-    K --> L[Build daily UMTS and LTE summaries]
-    L --> M[Build Date × Region summaries]
-    M --> N([Finish])
+```
+ReportProcess
+ ├── DeleteAllSheet   – remove all sheets except "Control" / "EP Information"
+ ├── ImportFile       – open source files read-only, copy required columns only
+ ├── Process          – add calculated columns (formulas below)
+ ├── Summary          – aggregate date-wise into "Control"
+ └── FormatAllSheets  – fonts, borders, header styling, number formats
 ```
 
-### Process steps
+---
 
-1.  **Prepare workbook:** Retain `Control` and `EP Information`; delete
-    other worksheets.
-2.  **Select inputs:** Choose the daily Huawei/Ericsson UMTS/LTE files.
-3.  **Identify and import:** Match files using their filename patterns
-    and import the specified columns from each file's first worksheet.
-4.  **Calculate KPIs:** Calculate throughput and utilization for each
-    vendor/technology dataset.
-5.  **Flag loaded cells:** Apply the configured throughput and
-    utilization thresholds.
-6.  **Map geography:** Extract the township code from the cell
-    identifier and look up Region and Township on `Control`.
-7.  **Finalize data:** Calculate formulas, handle formula errors as
-    blanks, and convert formula results to values.
-8.  **Create summaries:** Populate the daily summaries and Date × Region
-    summaries on `Control`.
+## 5. Part A — Huawei UMTS (3G)
 
-------------------------------------------------------------------------
+### 5.1 Imported Columns
 
-## 8. Pre-Run and Post-Run Checks
+Source columns `A, D, E, I, J, K` → sheet columns `A–F`:
 
--   Confirm that `Control` and `EP Information` exist before running the
-    macro.
--   Check that the township lookup table in `Control!D4:G7` covers the
-    required township codes and has the expected column positions.
--   Select the correct four files and confirm their filenames contain
-    the expected patterns.
--   Check that each source file's first worksheet contains the expected
-    source columns.
--   Confirm that Date and cell identifier fields are in the expected
-    positions and formats.
--   Check for missing region/township lookups and blank KPI values after
-    the run.
--   Validate throughput and utilization calculations against a few
-    manually calculated sample rows.
--   Confirm that the summary dates and region names are complete and
-    correctly sorted.
--   Save the completed workbook under a new name if the original
-    workbook needs to be preserved.
+| Sheet Col | Source Col | KPI Counter |
+|---|---|---|
+| A | A | **Date** (grouping key) |
+| B | D | — (carried, not used in formulas) |
+| C | E | **Max Transmit Power of Cell** |
+| D | I | **VS.HSDPA.DataOutput.Traffic(bit)** |
+| E | J | **VS.HSDPA.DataTtiNum.User** |
+| F | K | **VS.MeanTCP(dBm)** |
 
-## 9. Assumptions and Items to Verify
+### 5.2 Calculated Columns
 
-1.  **Lookup range:** `Control!D4:G7` contains only four rows, while the
-    report defines five regions. Confirm whether the lookup range is
-    intentionally limited or should be expanded to include all township
-    mappings.
-2.  **VLOOKUP indexing:** With `D:G` as the lookup range, the third
-    column index returns column F (Region), and the fourth returns
-    column G (Township). This matches the described layout.
-3.  **Date source:** Daily summary keys come from `HW UMTS!A`. If the
-    Huawei UMTS file is missing or lacks dates, the macro may not create
-    a complete date list for other datasets.
-4.  **Missing files:** Since missing files are skipped, summaries may be
-    incomplete when one or more files are not selected.
-5.  **UMTS power conversion:** Verify that the input in column C is
-    represented in the expected unit before applying `=10^(C/100)/1000`.
-6.  **Throughput units:** Confirm whether each vendor's source volume
-    and time counters require a factor of 1,000 or another conversion to
-    produce kbps.
-7.  **Loaded ratio:** The daily ratio uses the combined Huawei and
-    Ericsson loaded counts divided by the combined cell counts. Ensure
-    this is the intended KPI definition.
-8.  **Worksheet deletion:** The macro deletes every worksheet other than
-    `Control` and `EP Information` at the start of each run. Keep a
-    backup of any workbook with additional sheets.
+#### G — `HSDPA_UserThroughput`
 
-------------------------------------------------------------------------
+```
+Excel:   =D2/(E2*2)
+KPI:     VS.HSDPA.DataOutput.Traffic(bit) / (VS.HSDPA.DataTtiNum.User × 2)
+```
 
-## 10. Report Purpose
+$$
+\text{HSDPA User Throughput} = \frac{\text{Total HSDPA bits transmitted}}{\text{User TTI count} \times 2\,\text{ms}}
+$$
 
-This workbook provides a repeatable daily view of 3G/4G cell throughput
-and resource utilization across Huawei and Ericsson networks. It helps
-identify cells with low throughput, cells simultaneously experiencing
-low throughput and high utilization, and regional patterns that may
-require capacity or optimization investigation.
+**Why × 2?** In HSDPA, **TTI (Transmission Time Interval) = 2 ms**.
+Total transmission time = (number of user TTIs) × 2 ms, so throughput = bits ÷ time.
+We are deriving cell-level HSDPA user throughput from raw counters.
+
+#### H — `VS.MeanTCP(W)`
+
+```
+Excel:   =10^(F2/10)/1000
+KPI:     10^(VS.MeanTCP(dBm)/10) / 1000
+```
+
+$$
+P_{(Watt)} = \frac{10^{(dBm/10)}}{1000}
+$$
+
+**Why convert?** The counter is in **dBm**, but the cell max power is converted to
+**Watts** — both must be in the same unit before dividing.
+(dBm → mW: `10^(dBm/10)`, then mW → W: ÷ 1000.)
+
+**Examples:** 43 dBm ≈ 20 W · 40 dBm = 10 W
+
+#### I — `Max Transmit Power of Cell_watt`
+
+```
+Excel:   =10^(C2/100)/1000
+KPI:     10^(Max Transmit Power of Cell/100) / 1000
+```
+
+$$
+P_{max(Watt)} = \frac{10^{(value/100)}}{1000}
+$$
+
+**Why `/100` instead of `/10`?** The Huawei export stores this column in a **scaled
+format** (value ≈ dBm × 10), so dividing by 100 instead of 10 compensates.
+Example: `430` → 10^4.3 / 1000 ≈ **20 W**.
+
+#### J — `TCP Utilization(%)`
+
+```
+Excel:   =H2/I2*100
+KPI:     VS.MeanTCP(W) / Max Transmit Power of Cell_watt × 100
+```
+
+$$
+\text{TCP Utilization (\%)} = \frac{\text{Average TCP Power used}}{\text{Cell Maximum Transmit Power}} \times 100
+$$
+
+**Interpretation:** How much of the cell's downlink power is used on average.
+Close to **100%** → power-heavy / power-limited cell.
+
+#### K — `Load Check_thrp`
+
+```
+Excel:   =IF(G2<1000,1,0)
+```
+
+> **IF HSDPA User Throughput < 1000 → 1, ELSE 0** (low-throughput cell)
+
+#### L — `Load Check_both`
+
+```
+Excel:   =IF(AND(G2<1000,J2>0.8),1,0)
+```
+
+> **IF (Throughput < 1000) AND (TCP Utilization > 80%) → 1, ELSE 0**
+
+⚠️ **See [Known Issues](#11-notes--known-issues)** — column J is in %, so the
+threshold `0.8` should likely be `80`.
+
+After calculation, formulas are converted to values and `#DIV/0!` cells are cleared
+(Excel equivalent of the Python `nan_count` check — caused by zero TTIs, zero max
+power, or missing counters).
+
+---
+
+## 6. Part B — Ericsson UMTS (3G)
+
+### 6.1 Imported Columns
+
+Source columns `A, C, F, G` → sheet columns `A–D`:
+
+| Sheet Col | Source Col | KPI |
+|---|---|---|
+| A | A | **Date** (grouping key) |
+| B | C | — (carried, not used) |
+| C | F | **HS User Throughput(Kbps)** |
+| D | G | **Power Utilization** |
+
+### 6.2 Calculated Columns
+
+Ericsson **already provides** user throughput and power utilization directly —
+**no counter derivation needed** (unlike Huawei).
+
+#### E — `Load Check_thrp`
+
+```
+Excel:   =IF(C2="","NA",IF(C2<1000,1,0))
+```
+
+> **IF HS User Throughput < 1000 Kbps → 1, ELSE 0** (blank throughput → NA, cleared later)
+
+#### F — `Load Check_both`
+
+```
+Excel:   =IF(C2="","NA",IF(AND(C2<1000,D2>80),1,0))
+```
+
+> **IF (HS User Throughput < 1000 Kbps) AND (Power Utilization > 80%) → 1, ELSE 0**
+
+**Unit difference vs Huawei:** Huawei uses a **ratio** (0.8 = 80%);
+Ericsson reports **percentage** directly (> 80). Same logic, different units.
+
+---
+
+## 7. Part C — Huawei LTE (4G)
+
+### 7.1 Imported Columns
+
+Source columns `A, E, I:M` → sheet columns `A–G`:
+
+| Sheet Col | Source Col | KPI Counter |
+|---|---|---|
+| A | A | **Date** (grouping key) |
+| B | E | — (carried, not used) |
+| C | I | **L.Thrp.bits.DL(bit)** |
+| D | J | **L.Thrp.bits.DL.LastTTI(bit)** |
+| E | K | **L.Thrp.Time.DL.RmvLastTTI(ms)** |
+| F | L | **L.ChMeas.PRB.DL.Used.Avg** |
+| G | M | **L.ChMeas.PRB.DL.Avail** |
+
+### 7.2 Calculated Columns
+
+#### H — `Throughput(kbps)`
+
+```
+Excel:   =(C2-D2)/E2
+KPI:     (L.Thrp.bits.DL(bit) − L.Thrp.bits.DL.LastTTI(bit)) / L.Thrp.Time.DL.RmvLastTTI(ms)
+```
+
+$$
+\text{Throughput} = \frac{\text{DL bits (excluding last TTI)}}{\text{DL throughput time (excluding last TTI, ms)}}
+$$
+
+**Why subtract LastTTI?** Huawei's total DL bits **include** the last TTI's bits,
+which fall outside the measured time window — removing them keeps numerator and
+denominator consistent.
+
+**Units:** `1 bit/ms = 1000 bit/s = 1 kbps`, so bits ÷ ms directly gives **kbps**.
+
+#### I — `PRB Utilization (%)`
+
+```
+Excel:   =F2/G2*100
+KPI:     L.ChMeas.PRB.DL.Used.Avg / L.ChMeas.PRB.DL.Avail × 100
+```
+
+$$
+\text{PRB Utilization (\%)} = \frac{\text{Average DL PRBs Used}}{\text{Average DL PRBs Available}} \times 100
+$$
+
+**PRB = Physical Resource Block** — all LTE DL user data is scheduled on PRBs.
+Examples: 50 used/100 avail = 50% · 85/100 = 85%.
+
+#### J — `Load Check`
+
+```
+Excel:   =IF(AND(H2<2000,I2>70),1,0)
+```
+
+> **IF (DL Throughput < 2000 kbps) AND (PRB Utilization > 70%) → 1, ELSE 0**
+
+**Meaning:** the cell is heavily loaded in PRBs but users still get low throughput →
+potential load-limited cell.
+
+---
+
+## 8. Part D — Ericsson LTE (4G)
+
+### 8.1 Imported Columns
+
+Source columns `A:H, J:K` → sheet columns `A–J` (source column I is skipped):
+
+| Sheet Col | Source Col | KPI Counter |
+|---|---|---|
+| A | A | **Date** (grouping key) |
+| B | B | — (carried) |
+| C | C | **pmPdcpVolDlDrb** |
+| D | D | **pmPdcpVolDlDrbLastTTI** |
+| E | E | **pmUeThpTimeDl** |
+| F | F | **pmPrbUsedDlDtch** |
+| G | G | **pmPrbUsedDlSrbFirstTrans** |
+| H | H | **pmPrbUsedDlAilgTot** |
+| I | J | **pmPrbUsedDlPcch** |
+| J | K | **pmPrbAvailDl** |
+
+### 8.2 Calculated Columns
+
+#### K — `Throughput(kbps)`
+
+```
+Excel:   =((C2-D2)/E2)*1000
+KPI:     (pmPdcpVolDlDrb − pmPdcpVolDlDrbLastTTI) / pmUeThpTimeDl × 1000
+```
+
+$$
+\text{Throughput} = \frac{\text{PDCP DL volume} - \text{Last TTI volume}}{\text{UE throughput time}} \times 1000
+$$
+
+- Same "remove LastTTI" logic as Huawei.
+- **Why × 1000?** Ericsson's `pmUeThpTimeDl` uses a different time base than
+  Huawei's millisecond counter; the × 1000 factor normalizes the result into
+  **kbps** so the same 2000 kbps threshold applies. (Verify against your report's
+  counter unit definitions.)
+
+#### L — `PRB Utilization(%)`
+
+```
+Excel:   =((F2+G2+H2+I2)/J2)*100
+KPI:     (pmPrbUsedDlDtch + pmPrbUsedDlSrbFirstTrans + pmPrbUsedDlAilgTot + pmPrbUsedDlPcch)
+         / pmPrbAvailDl × 100
+```
+
+$$
+\text{PRB Utilization (\%)} = \frac{pmPrbUsedDlDtch + pmPrbUsedDlSrbFirstTrans + pmPrbUsedDlAilgTot + pmPrbUsedDlPcch}{pmPrbAvailDl} \times 100
+$$
+
+**Why sum 4 counters?** Ericsson splits DL PRB usage by channel type —
+DTCH (user data), SRB first transmissions (signaling), AILG, PCCH (paging) —
+so they must be **summed** to get total DL PRB usage. Huawei provides this as a
+single averaged counter.
+
+#### M — `Load Check`
+
+```
+Excel:   =IF(AND(K2<2000,L2>70),1,0)
+```
+
+> **IF (Throughput < 2000 kbps) AND (PRB Utilization > 70%) → 1, ELSE 0**
+
+Identical threshold to Huawei LTE.
+
+---
+
+## 9. Summary Sheet (Control)
+
+Rows 4:1000 are cleared, then results are written from **row 4**, grouped by the
+**Date** (column A of the imported data). This is the Excel equivalent of the
+Python `groupby('Date').agg(['sum','count'])`:
+
+- **`count`** → total cell records reported that date
+- **`sum`** → how many of those cells were flagged (= 1)
+
+### UMTS Block (columns I–P)
+
+| Col | Field | Formula |
+|---|---|---|
+| I | Date | grouping key |
+| J | HW UMTS total records | count of rows |
+| K | HW UMTS `Load Check_thrp` hits | count of G = 1 |
+| L | HW UMTS `Load Check_both` hits | count of L = 1 |
+| M | Eric UMTS total records | count of rows |
+| N | Eric UMTS `Load Check_thrp` hits | count of E = 1 |
+| O | Eric UMTS `Load Check_both` hits | count of F = 1 |
+| P | **UMTS load ratio** | `=(L+O)/(J+M)` |
+
+### LTE Block (columns R–W)
+
+| Col | Field | Formula |
+|---|---|---|
+| R | Date | grouping key |
+| S | HW LTE total records | count of rows |
+| T | HW LTE `Load Check` hits | count of J = 1 |
+| U | Eric LTE total records | count of rows |
+| V | Eric LTE `Load Check` hits | count of M = 1 |
+| W | **LTE load ratio** | `=(T+V)/(S+U)` |
+
+**Reading the ratios:** `P` and `W` are the fraction (0–1) of cell-records that day
+which were **low throughput + high load**, combined across both vendors.
+
+---
+
+## 10. Thresholds Summary
+
+| Check | Condition | Flag |
+|---|---|---|
+| UMTS low throughput (both vendors) | User Throughput **< 1000 kbps** | `Load Check_thrp` |
+| Huawei UMTS power | TCP Utilization **> 80%** | `Load Check_both` |
+| Ericsson UMTS power | Power Utilization **> 80%** | `Load Check_both` |
+| LTE low throughput (both vendors) | DL Throughput **< 2000 kbps** | `Load Check` |
+| LTE PRB (both vendors) | PRB Utilization **> 70%** | `Load Check` |
+
+All thresholds live in the `Process` sub and can be edited there.
+
+## 11. Notes & Known Issues
+
+1. **⚠️ HW UMTS `Load Check_both` threshold:** column J is multiplied by × 100
+   (percentage), but the condition tests `J > 0.8` (i.e., 0.8%). The original
+   Python script compares the **ratio** against 0.8 (= 80%). The Excel version
+   likely should use `J2>80`. Please verify.
+2. **Summary keys come only from HW UMTS.** Dates/cells present only in Eric or
+   LTE files are not added to the summary — those rows are matched against the
+   HW UMTS key set only. If the HW UMTS file is missing, the summary is empty.
+3. **Success message on error:** `CleanUp` always shows the MsgBox, even if a
+   runtime error occurred mid-run (application settings are still restored).
+4. Source workbooks are opened **read-only** and closed without saving.
+5. Data sheets are **deleted and recreated** every run — do not store manual work
+   in them.
+6. The last row is detected via column A — avoid blank rows inside the data.
+7. `Max Transmit Power of Cell` uses the `/100` conversion (scaled vendor format) —
+   confirm with a known cell (e.g., 43 dBm ≈ 20 W).
